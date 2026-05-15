@@ -1,4 +1,4 @@
-# 🎧 Song Recommender
+# Song Recommender
 
 A conversational song-recommendation system. The user chats about artists, albums, tracks, or
 moods they like; an LLM agent composes Spotify API calls to recommend songs.
