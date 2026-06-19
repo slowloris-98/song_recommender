@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+
+# Env / secrets
+.env
+*.local
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
