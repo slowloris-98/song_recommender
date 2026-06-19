@@ -1,0 +1,12 @@
+{"id": "capability-question", "category": "none", "prompt": "Hi! What can you help me with?", "expected_tools": []}
+{"id": "off-topic", "category": "none", "prompt": "What's the capital of France?", "expected_tools": []}
+{"id": "single-search-genre-year", "category": "single", "prompt": "Find me some indie pop songs from 2020.", "expected_tools": ["search"]}
+{"id": "single-search-mood", "category": "single", "prompt": "Give me a few upbeat summer dance tracks.", "expected_tools": ["search"]}
+{"id": "single-search-by-artist", "category": "single", "prompt": "Show me some songs by Tame Impala.", "expected_tools": ["search"]}
+{"id": "multi-similar-artist", "category": "multi", "prompt": "Recommend songs similar to Tame Impala.", "expected_tools": ["search", "get_artist", "search"]}
+{"id": "multi-two-seed-artists", "category": "multi", "prompt": "I love both Daft Punk and Justice. Recommend songs that fit somewhere between them.", "expected_tools": ["search", "get_artist", "search"]}
+{"id": "multi-genre-from-artist", "category": "multi", "prompt": "What genres is Kendrick Lamar associated with, and recommend tracks in those genres from the last few years?", "expected_tools": ["search", "get_artist", "search"]}
+{"id": "deep-album-cuts", "category": "deep", "prompt": "Give me some deep cuts from Radiohead albums, not the popular singles.", "expected_tools": ["search", "get_artist_albums", "get_album_tracks"]}
+{"id": "deep-specific-album-tracks", "category": "deep", "prompt": "Pull lesser-known tracks from across Arctic Monkeys' albums for me.", "expected_tools": ["search", "get_artist_albums", "get_album_tracks"]}
+{"id": "deep-full-flow", "category": "deep", "prompt": "I'm a big fan of Bon Iver. Explore their catalogue and put together a playlist of underrated album tracks plus a couple of similar-sounding songs.", "expected_tools": ["search", "get_artist", "get_artist_albums", "get_album_tracks"]}
+{"id": "deep-track-detail", "category": "deep", "prompt": "Find the song 'Motion Sickness' by Phoebe Bridgers and tell me its details, then recommend three similar tracks.", "expected_tools": ["search", "get_track", "search"]}
