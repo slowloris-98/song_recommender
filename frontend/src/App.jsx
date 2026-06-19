@@ -1,5 +1,12 @@
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useChat } from "./hooks/useChat";
+
+// Render Markdown links as new-tab links (e.g. Spotify URLs the agent includes).
+const mdComponents = {
+  a: ({ node, ...props }) => <a target="_blank" rel="noreferrer" {...props} />,
+};
 
 export default function App() {
   const { messages, busy, send } = useChat();
@@ -37,7 +44,19 @@ export default function App() {
               </div>
             )}
             <div className="bubble">
-              {m.content || (m.role === "assistant" && busy ? "…" : "")}
+              {m.role === "assistant" ? (
+                m.content ? (
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                    {m.content}
+                  </ReactMarkdown>
+                ) : busy ? (
+                  "…"
+                ) : (
+                  ""
+                )
+              ) : (
+                m.content
+              )}
             </div>
           </div>
         ))}
