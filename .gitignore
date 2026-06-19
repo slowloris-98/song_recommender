@@ -9,6 +9,9 @@ venv/
 node_modules/
 dist/
 
+# Logs
+logs/
+
 # Env / secrets
 .env
 *.local
