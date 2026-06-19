@@ -5,8 +5,8 @@
 MemorySaver for a persistent checkpointer (e.g. SqliteSaver/PostgresSaver).
 """
 
+from langchain.agents import create_agent
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.prebuilt import create_react_agent
 
 SYSTEM_PROMPT = """You are a music recommendation assistant with access to Spotify tools.
 
@@ -30,9 +30,9 @@ Briefly explain your reasoning, then list the recommended tracks.
 
 
 def build_agent(llm, tools):
-    return create_react_agent(
+    return create_agent(
         llm,
         tools,
-        prompt=SYSTEM_PROMPT,
+        system_prompt=SYSTEM_PROMPT,
         checkpointer=MemorySaver(),
     )
