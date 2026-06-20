@@ -14,6 +14,10 @@ Confirmed decisions:
 - **Interaction:** multi-turn streaming chat (SSE) with per-session conversation memory.
 - **LLM:** OpenAI by default, behind a provider abstraction so more providers are config-only.
 
+**Status (2026-06-19):** Phase 1 is built and verified end-to-end (read-only recommendations work in the
+browser). Post-scaffolding hardening since landed — see **Phase 1 hardening** below. Phase 2 (OAuth +
+playlist writes) remains deferred.
+
 ---
 
 ## Architecture review — gaps designed around
@@ -56,32 +60,39 @@ Confirmed decisions:
 song_recommender/
 ├── backend/                      # FastAPI + LangGraph agent (OpenAI default)
 │   ├── app/
-│   │   ├── main.py               # FastAPI app, CORS, lifespan: build MCP client + agent once
+│   │   ├── main.py               # FastAPI app, CORS, logging, lifespan: build MCP client + agent once
 │   │   ├── config.py             # pydantic-settings: LLM_PROVIDER, LLM_MODEL, MCP_URL, keys
 │   │   ├── llm.py                # provider factory -> init_chat_model(...)
 │   │   ├── mcp_client.py         # MultiServerMCPClient -> MCP tools as LangChain tools
-│   │   ├── agent.py              # create_react_agent(llm, tools, checkpointer=MemorySaver())
+│   │   ├── agent.py              # create_agent(llm, tools, checkpointer=MemorySaver())
+│   │   ├── prompts.py            # RECOMMENDATION_AGENT_SYSTEM_PROMPT (search-composition strategy)
 │   │   ├── routes/chat.py        # POST /chat -> SSE stream; thread_id = session_id
 │   │   └── schemas.py
+│   ├── logs/                     # rotating backend.log (gitignored)
 │   ├── requirements.txt
 │   └── .env.example
 ├── mcp_server/                   # FastMCP server wrapping Spotify
-│   ├── server.py                 # FastMCP("spotify"), run(transport="streamable-http")
+│   ├── server.py                 # FastMCP("spotify"), logging, run(transport="streamable-http")
 │   ├── spotify/
 │   │   ├── client.py             # httpx; Client Credentials token + refresh; 429/Retry-After
 │   │   ├── auth.py               # token cache; (Phase 2) user-token passthrough hook
-│   │   └── normalize.py          # trim Spotify payloads -> compact dicts
-│   ├── tools.py                  # @mcp.tool primitives
+│   │   └── normalize.py          # trim Spotify payloads -> compact dicts (incl. album-art images)
+│   ├── tools.py                  # @mcp.tool primitives + _log_call() tool-call logging
+│   ├── logs/                     # rotating mcp.log (gitignored)
 │   ├── requirements.txt
 │   └── .env.example
 ├── frontend/                     # React (Vite)
 │   ├── src/
-│   │   ├── App.jsx
+│   │   ├── App.jsx               # chat UI; renders markdown + inline album art
 │   │   ├── api.js                # POST /chat, consume SSE
+│   │   ├── styles.css            # chat styling incl. album-art thumbnails
 │   │   ├── hooks/useChat.js      # session_id mgmt + streaming state
-│   │   └── components/           # ChatWindow, MessageList, TrackCard
+│   │   └── components/           # TrackCard (ready for structured track output)
 │   ├── package.json
 │   └── .env.example
+├── tests/
+│   ├── run_tool_eval.py          # tool-call eval harness: replays prompts, tallies tool_start events
+│   └── test_prompts.jsonl        # 12 categorized prompts (none/single/multi/deep)
 ├── docker-compose.yml
 └── README.md
 ```
@@ -96,13 +107,30 @@ FastMCP streamable-http. Prescriptive tool docstrings so the agent composes corr
 `get_artist_top_tracks` or batch `get_tracks`.
 
 **backend:** `config.py`, `llm.py` (provider factory — single swap point), `mcp_client.py`,
-`agent.py` (react agent + MemorySaver + search-based composition system prompt), `routes/chat.py`
-(SSE `/chat`, `thread_id = session_id`), `main.py` (CORS + lifespan).
+`agent.py` (`create_agent` + MemorySaver), `prompts.py` (search-based composition system prompt),
+`routes/chat.py` (SSE `/chat`, `thread_id = session_id`), `main.py` (CORS + lifespan).
 
 **frontend:** `useChat.js` (session_id + SSE), chat UI + `TrackCard`.
 
-**Reuse:** `langchain-mcp-adapters`, `langgraph` `create_react_agent` + `MemorySaver`, `init_chat_model`,
-`langchain-openai`, FastMCP `@mcp.tool` + `streamable-http`.
+**Reuse:** `langchain-mcp-adapters`, `langchain`/`langgraph` `create_agent` + `MemorySaver`,
+`init_chat_model`, `langchain-openai`, FastMCP `@mcp.tool` + `streamable-http`.
+
+## Phase 1 hardening (post-scaffolding)
+
+Work that landed after the initial scaffolding, while keeping Phase 1 read-only scope:
+- **`create_agent` migration:** replaced the deprecated `create_react_agent` (langgraph) with
+  `create_agent` (langchain 1.0).
+- **Prompt extraction:** moved the system prompt inline-in-`agent.py` out to `prompts.py`
+  (`RECOMMENDATION_AGENT_SYSTEM_PROMPT`) so it's versioned and editable in one place.
+- **Logging / observability:** backend and MCP server both log to console + a rotating file
+  (`backend/logs/backend.log`, `mcp_server/logs/mcp.log`; 1 MB × 3 backups). `tools.py` logs every
+  tool call via `_log_call()` (args logged, `user_token` redacted).
+- **Album art:** `normalize.py` now carries `images`; the frontend renders inline album-art thumbnails
+  in assistant messages (`styles.css`).
+- **Tool-eval harness:** `tests/run_tool_eval.py` replays `tests/test_prompts.jsonl` against the running
+  backend's `/chat` SSE stream and tallies `tool_start` events per prompt — used to sanity-check that the
+  agent composes the right number/kind of tool calls (categories: none / single / multi / deep). Needs
+  `httpx` + `httpx_sse` and a running backend + MCP server.
 
 ## Phase 2 (deferred seams)
 
@@ -118,8 +146,9 @@ OAuth (`/auth/login`, `/auth/callback`, PKCE) + token store + "Login with Spotif
 1. MCP standalone: `search(query='genre:"indie" year:2020-2024', type='track')` + `get_artist` return
    normalized data — proves Client Credentials + normalization + search strategy.
 2. Backend: `curl -N` SSE `/chat`; confirm multi-step tool calls + streamed list; follow-up with same
-   `session_id` confirms memory.
-3. Frontend: chat end-to-end; streaming render + TrackCards.
+   `session_id` confirms memory. For a repeatable check, run `python tests/run_tool_eval.py` (backend +
+   MCP must be up) to tally tool calls per prompt across the `test_prompts.jsonl` cases.
+3. Frontend: chat end-to-end; streaming render + inline album art.
 4. Provider swap: change `LLM_PROVIDER`/`LLM_MODEL`; agent runs unchanged.
 
 ---
@@ -143,20 +172,27 @@ OAuth (`/auth/login`, `/auth/callback`, PKCE) + token store + "Login with Spotif
 
 **Phase 1 — backend**
 - [x] `config.py`, `llm.py` (provider factory), `mcp_client.py`
-- [x] `agent.py`: react agent + MemorySaver + composition system prompt
+- [x] `agent.py`: agent + MemorySaver + composition system prompt
 - [x] `routes/chat.py`: SSE `/chat` with `thread_id = session_id`
 - [x] `main.py`: CORS + lifespan wiring
 
 **Phase 1 — frontend**
 - [x] `useChat.js`: session_id + SSE streaming
 - [x] Chat UI + `TrackCard` component (ready for structured track output)
+- [x] Inline album-art rendering in assistant messages
+
+**Phase 1 — hardening**
+- [x] Migrate `create_react_agent` → `create_agent` (deprecation fix)
+- [x] Extract system prompt to `prompts.py`
+- [x] Rotating-file logging for backend + MCP server; `_log_call()` tool-call logging
+- [x] Tool-eval harness `tests/run_tool_eval.py` + `tests/test_prompts.jsonl`
 
 **Phase 1 — verification**
 - [x] Static: Python byte-compiles (3.12), file tree matches plan
-- [ ] Runtime: MCP standalone search/get_artist (needs Spotify creds)
-- [ ] Runtime: Backend SSE + session memory (needs OpenAI key + MCP running)
-- [ ] Runtime: Frontend end-to-end
-- [ ] Runtime: Provider swap smoke test
+- [x] Runtime: MCP standalone search/get_artist (with Spotify creds)
+- [x] Runtime: Backend SSE + session memory (OpenAI key + MCP running)
+- [x] Runtime: Frontend end-to-end (chat + album art render in browser)
+- [ ] Runtime: Provider swap smoke test (non-OpenAI provider)
 
 **Phase 2 — deferred**
 - [ ] OAuth + token store + "Login with Spotify"
