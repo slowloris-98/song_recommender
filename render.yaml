@@ -47,8 +47,10 @@ services:
     staticPublishPath: ./dist
     envVars:
       # Baked into the Vite build at build time — must be set before the build runs.
+      # Uses the backend's Render-assigned hostname: the plain `song-recommender-backend`
+      # subdomain was already taken, so Render suffixed this service with `-tt5c`.
       - key: VITE_API_BASE_URL
-        value: https://song-recommender-backend.onrender.com
+        value: https://song-recommender-backend-tt5c.onrender.com
     routes:
       - type: rewrite
         source: /*
