@@ -109,16 +109,36 @@ backend and MCP server as free **Docker web services**.
 1. Push this repo to GitHub, then in Render pick **New → Blueprint** and connect it.
 2. When prompted, fill the secrets Render can't infer: `SPOTIFY_CLIENT_ID` /
    `SPOTIFY_CLIENT_SECRET` (MCP) and `OPENAI_API_KEY` (backend).
-3. Apply. Render builds MCP → backend → frontend and injects `MCP_URL`, `CORS_ORIGINS`, and
-   `VITE_API_BASE_URL` from the Blueprint. If you rename any service, update those three values to
-   match its `https://<name>.onrender.com` URL and redeploy.
+3. Apply. Render builds MCP → backend → frontend using the `MCP_URL`, `CORS_ORIGINS`, and
+   `VITE_API_BASE_URL` values in the Blueprint.
 
-Smoke-test the deployed backend:
+> **⚠️ `onrender.com` hostnames are global — mind the suffix.** If a service's default name
+> (e.g. `song-recommender-backend`) is already taken by someone else, Render assigns a *suffixed*
+> hostname like `song-recommender-backend-tt5c.onrender.com`. The cross-service URLs in
+> `render.yaml` are hard-coded, so any service that gets a suffix must have its URL corrected:
+> - `VITE_API_BASE_URL` (frontend) must equal the backend's **actual** hostname. It is baked into
+>   the Vite bundle at build time, so after correcting it you must **redeploy the frontend with
+>   "Clear build cache & deploy"** — editing the env var alone does nothing.
+> - `CORS_ORIGINS` (backend) must equal the frontend's actual hostname.
+> - `MCP_URL` (backend) must equal the MCP server's actual hostname + `/mcp`.
+>
+> In the current deployment only the backend was suffixed (`-tt5c`); MCP and frontend kept their
+> clean names, so `render.yaml` already reflects this.
+
+Smoke-test the deployed backend (use your backend's actual hostname):
 ```bash
-curl https://song-recommender-backend.onrender.com/health          # {"status":"ok"}
-curl -N -X POST https://song-recommender-backend.onrender.com/chat \
+curl https://song-recommender-backend-tt5c.onrender.com/health          # {"status":"ok"}
+curl -N -X POST https://song-recommender-backend-tt5c.onrender.com/chat \
   -H "Content-Type: application/json" \
   -d '{"session_id":"smoke-1","message":"Recommend songs like Tame Impala"}'
+```
+
+To confirm the frontend bundle points at the right backend after a redeploy:
+```bash
+js=$(curl -sS https://song-recommender-frontend.onrender.com/ | grep -oE '/assets/[^"]+\.js' | head -1)
+curl -sS "https://song-recommender-frontend.onrender.com$js" \
+  | grep -oE 'https://song-recommender-backend[a-z0-9-]*\.onrender\.com' | sort -u
+# expect: https://song-recommender-backend-tt5c.onrender.com
 ```
 
 **Free-tier caveats.** Free web services spin down after 15 min idle and take ~1 min to cold-start
