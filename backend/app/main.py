@@ -4,6 +4,7 @@ On startup we connect to the MCP server, load its Spotify tools, build the LLM a
 agent once, and stash the agent on app.state for the chat route to reuse.
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
@@ -37,11 +38,24 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(), _file_handler],
 )
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     mcp_client = build_mcp_client()
-    tools = await mcp_client.get_tools()
+    # On a free-tier host the MCP server may be spun down and take ~1 min to wake, so retry
+    # the initial tool-load instead of crashing the backend boot on the cold-start race.
+    tools = None
+    for attempt in range(1, 7):  # ~90s total: enough for a cold MCP to wake
+        try:
+            tools = await mcp_client.get_tools()
+            break
+        except Exception as exc:  # noqa: BLE001 - retry any startup-time MCP failure
+            logger.warning("MCP not ready (attempt %d/6): %s", attempt, exc)
+            await asyncio.sleep(15)
+    if tools is None:
+        raise RuntimeError("MCP server unreachable at startup")
     llm = build_llm()
     app.state.agent = build_agent(llm, tools)
     yield
