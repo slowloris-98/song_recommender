@@ -14,9 +14,9 @@ Confirmed decisions:
 - **Interaction:** multi-turn streaming chat (SSE) with per-session conversation memory.
 - **LLM:** OpenAI by default, behind a provider abstraction so more providers are config-only.
 
-**Status (2026-06-19):** Phase 1 is built and verified end-to-end (read-only recommendations work in the
-browser). Post-scaffolding hardening since landed — see **Phase 1 hardening** below. Phase 2 (OAuth +
-playlist writes) remains deferred.
+**Status (2026-07-14):** Phase 1 is built and verified end-to-end (read-only recommendations work in the
+browser) and **deployed to Render** (free tier) — see **Deployment** below. Post-scaffolding hardening
+landed earlier — see **Phase 1 hardening**. Phase 2 (OAuth + playlist writes) remains deferred.
 
 ---
 
@@ -193,6 +193,12 @@ OAuth (`/auth/login`, `/auth/callback`, PKCE) + token store + "Login with Spotif
 - [x] Runtime: Backend SSE + session memory (OpenAI key + MCP running)
 - [x] Runtime: Frontend end-to-end (chat + album art render in browser)
 - [ ] Runtime: Provider swap smoke test (non-OpenAI provider)
+
+**Deployment (Render, free tier)**
+- [x] `render.yaml` Blueprint: frontend static site + backend & MCP Docker web services
+- [x] `$PORT` binding (MCP `server.py`, backend Dockerfile CMD) + resilient MCP-load retry in lifespan
+- [x] Live end-to-end on Render — see README **Deploy to Render** for URLs and the hostname-suffix gotcha
+- [ ] (optional) Swap `MemorySaver` → `PostgresSaver` so memory survives free-tier spin-down
 
 **Phase 2 — deferred**
 - [ ] OAuth + token store + "Login with Spotify"
