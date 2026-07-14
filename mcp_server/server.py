@@ -5,6 +5,7 @@ The MCP endpoint is served at  http://<MCP_HOST>:<MCP_PORT>/mcp
 """
 
 import logging
+import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -36,7 +37,9 @@ logging.basicConfig(
 
 
 def build_server() -> FastMCP:
-    mcp = FastMCP("spotify", host=settings.mcp_host, port=settings.mcp_port)
+    # Honor the host platform's $PORT (e.g. Render) when present, else the configured default.
+    port = int(os.getenv("PORT", settings.mcp_port))
+    mcp = FastMCP("spotify", host=settings.mcp_host, port=port)
     tools.set_client(
         SpotifyClient(settings.spotify_client_id, settings.spotify_client_secret)
     )

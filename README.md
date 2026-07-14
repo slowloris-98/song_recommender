@@ -100,6 +100,34 @@ docker compose up --build
 `docker-compose.yml` wires the three services together and overrides `MCP_URL` so the backend
 reaches the MCP server by its compose service name (`http://mcp_server:8001/mcp`).
 
+## Deploy to Render (free tier)
+
+All three services deploy to [Render](https://render.com) from one
+[`render.yaml`](render.yaml) Blueprint: the frontend as a free **Static Site** (always-on), the
+backend and MCP server as free **Docker web services**.
+
+1. Push this repo to GitHub, then in Render pick **New → Blueprint** and connect it.
+2. When prompted, fill the secrets Render can't infer: `SPOTIFY_CLIENT_ID` /
+   `SPOTIFY_CLIENT_SECRET` (MCP) and `OPENAI_API_KEY` (backend).
+3. Apply. Render builds MCP → backend → frontend and injects `MCP_URL`, `CORS_ORIGINS`, and
+   `VITE_API_BASE_URL` from the Blueprint. If you rename any service, update those three values to
+   match its `https://<name>.onrender.com` URL and redeploy.
+
+Smoke-test the deployed backend:
+```bash
+curl https://song-recommender-backend.onrender.com/health          # {"status":"ok"}
+curl -N -X POST https://song-recommender-backend.onrender.com/chat \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"smoke-1","message":"Recommend songs like Tame Impala"}'
+```
+
+**Free-tier caveats.** Free web services spin down after 15 min idle and take ~1 min to cold-start
+(the backend retries the initial MCP connection so the wake race doesn't crash startup). Because
+`MemorySaver` is in-process, multi-turn conversation memory resets whenever the backend spins
+down. The two web services share 750 free instance-hours/month; heavy use can exhaust them until
+the next month. Swap `MemorySaver` for a `PostgresSaver` (see `backend/app/agent.py`) or move to a
+paid instance to remove these limits.
+
 ## Configuration
 
 Each service reads a `.env` file (copy from its `.env.example`). Config is loaded via
