@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     # Comma-separated allowed CORS origins for the React dev server.
     cors_origins: str = "http://localhost:5173"
 
+    log_level: str = "INFO"
+
+    # Per-turn JSONL records (query, tool calls + results, final answer) in logs/turns.jsonl.
+    # These contain full user messages and model output, so they're an opt-out, not a log
+    # level: set TURN_LOG_ENABLED=false to stop writing them entirely.
+    turn_log_enabled: bool = True
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @property

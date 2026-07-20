@@ -99,8 +99,8 @@ def register_tools(mcp: FastMCP) -> None:
     async def get_album_tracks(
         album_id: str, limit: int = 50, user_token: str | None = None
     ) -> list[dict]:
-        """Get the tracks on an album. These simplified tracks lack album art; use
-        `get_track` or `search` if you need full per-track detail (art, preview URL)."""
+        """Get the tracks on an album. These simplified tracks omit the album name; use
+        `get_track` or `search` if you need that per-track detail."""
         _log_call("get_album_tracks", album_id=album_id, limit=limit)
         data = await _spotify.get(
             f"/albums/{album_id}/tracks",
@@ -111,8 +111,8 @@ def register_tools(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def get_track(track_id: str, user_token: str | None = None) -> dict:
-        """Get full detail for a SINGLE track by Spotify ID (album art, preview URL,
-        duration). Note: batch track lookup is deprecated — fetch one track at a time."""
+        """Get full detail for a SINGLE track by Spotify ID (album name, duration).
+        Note: batch track lookup is deprecated — fetch one track at a time."""
         _log_call("get_track", track_id=track_id)
         return normalize.track(
             await _spotify.get(f"/tracks/{track_id}", user_token=user_token)

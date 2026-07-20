@@ -6,6 +6,8 @@ lives in tools.py; this client only does transport.
 """
 
 import asyncio
+import logging
+import time
 
 import httpx
 
@@ -13,6 +15,8 @@ from .auth import TokenCache
 
 API_BASE = "https://api.spotify.com/v1"
 _MAX_RETRY_SLEEP = 10.0
+
+logger = logging.getLogger("spotify.client")
 
 
 class SpotifyClient:
@@ -40,6 +44,7 @@ class SpotifyClient:
 
         for attempt in range(self._max_retries + 1):
             token = user_token or await self._tokens.get_token(self._http)
+            start = time.monotonic()
             resp = await self._http.request(
                 method,
                 url,
@@ -48,10 +53,28 @@ class SpotifyClient:
                 headers={"Authorization": f"Bearer {token}"},
             )
             last_resp = resp
+            # `params` only ever holds query/id/limit values — no secrets. The token lives
+            # in the header and is never logged here or anywhere else.
+            logger.debug(
+                "%s %s params=%s -> %d (%dms)",
+                method,
+                path,
+                params,
+                resp.status_code,
+                round((time.monotonic() - start) * 1000),
+            )
 
             if resp.status_code == 429 and attempt < self._max_retries:
                 retry_after = float(resp.headers.get("Retry-After", "1"))
-                await asyncio.sleep(min(retry_after, _MAX_RETRY_SLEEP))
+                sleep_for = min(retry_after, _MAX_RETRY_SLEEP)
+                logger.warning(
+                    "rate limited on %s, sleeping %.1fs (attempt %d/%d)",
+                    path,
+                    sleep_for,
+                    attempt + 1,
+                    self._max_retries,
+                )
+                await asyncio.sleep(sleep_for)
                 continue
 
             # App token expired/revoked: drop it and retry once with a fresh one.
@@ -60,6 +83,7 @@ class SpotifyClient:
                 and user_token is None
                 and attempt < self._max_retries
             ):
+                logger.warning("401 on %s, refreshing app token and retrying", path)
                 self._tokens.invalidate()
                 continue
 
@@ -70,6 +94,12 @@ class SpotifyClient:
 
         # Retries exhausted — raise the last response's error.
         assert last_resp is not None
+        logger.error(
+            "retries exhausted on %s after %d attempts, last status %d",
+            path,
+            self._max_retries + 1,
+            last_resp.status_code,
+        )
         last_resp.raise_for_status()
         return {}
 

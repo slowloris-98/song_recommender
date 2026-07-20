@@ -36,7 +36,7 @@ touches Spotify directly and stays portable.
    request it streams the agent's run as Server-Sent Events. The agent's tools are the MCP
    server's tools, loaded via `langchain-mcp-adapters`. The LLM provider is swappable by config.
 3. **`frontend/`** — a React/Vite chat UI that POSTs to `/chat`, renders the streamed tokens as
-   Markdown (including inline album art), and persists a `session_id` for multi-turn memory.
+   Markdown, and persists a `session_id` for multi-turn memory.
 
 ### Request flow
 
@@ -230,8 +230,8 @@ dicts (see [mcp_server/spotify/normalize.py](mcp_server/spotify/normalize.py)).
 | `search`             | `query`, `type` (`track`/`artist`/`album`), `limit` | **Primary discovery tool.** Put filters in `query`: `artist:"…"`, `genre:"…"`, `year:2018-2024`, `track:"…"`. |
 | `get_artist`         | `artist_id`                         | Single artist incl. `genres` + `popularity` — use genres as search seeds.     |
 | `get_artist_albums`  | `artist_id`, `limit`                | Albums + singles, to dig into a seed artist's catalogue.                      |
-| `get_album_tracks`   | `album_id`, `limit`                 | An album's tracks (simplified; no per-track art).                            |
-| `get_track`          | `track_id`                          | Full detail for one track (album art, preview URL, duration).                |
+| `get_album_tracks`   | `album_id`, `limit`                 | An album's tracks (simplified; omits the album name).                        |
+| `get_track`          | `track_id`                          | Full detail for one track (album name, duration).                            |
 
 Spotify access details live in [mcp_server/spotify/](mcp_server/spotify/): `client.py` (async
 httpx transport, 429 `Retry-After` backoff, one-shot 401 token refresh), `auth.py` (Client
@@ -261,13 +261,50 @@ python tests/run_tool_eval.py --base-url http://localhost:8000 --prompts tests/t
 Both Python services log to the terminal **and** a rotating file (1 MB × 3 backups), configured
 at import time so a bare `python server.py` / `uvicorn app.main:app` captures everything:
 
-- Backend → `backend/logs/backend.log`
+- Backend → `logs/backend.log` (project root, **not** `backend/logs/` — `uvicorn --reload`
+  watches `backend/`, so a log file in there would restart the server on every write)
 - MCP server → `mcp_server/logs/mcp.log`
 
-The MCP server logs every tool invocation with its arguments (a `_log_call` helper in
-[mcp_server/tools.py](mcp_server/tools.py), with `user_token` omitted), so the MCP log is the
-first place to look when debugging what the agent asked Spotify for. The `logs/` directories are
-git-ignored.
+`LOG_LEVEL` (default `INFO`) is honored by both services. Set it to `DEBUG` on the MCP server
+for a line per Spotify HTTP request with path, params, status and latency; rate-limit backoff,
+401 token refresh and retry exhaustion are logged at WARNING/ERROR regardless. The MCP server
+also logs every tool invocation with its arguments (a `_log_call` helper in
+[mcp_server/tools.py](mcp_server/tools.py)). Tokens are never logged anywhere — not the
+`Authorization` header, not `user_token`, not the app token (only its expiry).
+
+### Turn records
+
+The backend also writes one JSON object per chat turn to `logs/turns.jsonl` — the complete
+picture of a turn, which the line-based logs can't give you:
+
+```json
+{
+  "turn_id": "20219971f17f", "session_id": "…", "started_at": "2026-07-19T18:11:…+00:00",
+  "duration_ms": 11422, "status": "ok",
+  "llm": {"provider": "openai", "model": "gpt-4o"},
+  "message": "melancholy chamber pop for a rainy evening",
+  "answer": "…the full recommendation text…",
+  "tool_calls": [
+    {"name": "search", "input": {"query": "genre:\"chamber pop\"", "type": "track"},
+     "output": [{"id": "6D8sCFkIMohsp88E54ozeP", "name": "05", "artists": ["Noto"], "…": "…"}],
+     "duration_ms": 2890}
+  ],
+  "usage": {"input_tokens": 6188, "output_tokens": 476, "total_tokens": 6664},
+  "error": null
+}
+```
+
+Note `tool_calls[].output`: the Spotify results the agent actually reasoned over are recorded
+here, though they are deliberately *not* sent to the browser. On failure `status` is `"error"`
+and `error.traceback` holds the full stack — with whatever partial answer and tool calls
+completed before it died. A turn is recorded even if the client disconnects mid-stream.
+
+Records are written whole and never rotated, so the file also works as a replay dataset for
+[tests/run_tool_eval.py](tests/run_tool_eval.py). Because it contains full user messages and
+model output, it's an explicit opt-out: set `TURN_LOG_ENABLED=false` to stop writing it.
+
+All `logs/` directories are git-ignored — and on Render they're ephemeral per-instance, so
+this is a development and evaluation tool, not durable production analytics.
 
 ## Project layout
 
@@ -301,7 +338,7 @@ backend/app/
   routes/chat.py       POST /chat → SSE stream
 
 frontend/src/
-  App.jsx              chat UI (renders Markdown + inline album art)
+  App.jsx              chat UI (renders streamed Markdown)
   api.js               streamChat(): POST /chat, parse SSE
   hooks/useChat.js     session_id persistence + message state
   components/TrackCard.jsx   (prepared for structured track output)

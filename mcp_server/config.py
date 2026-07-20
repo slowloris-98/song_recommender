@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     mcp_host: str = "0.0.0.0"
     mcp_port: int = 8001
 
+    # DEBUG adds a line per Spotify HTTP request (method, path, params, status, latency).
+    log_level: str = "INFO"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

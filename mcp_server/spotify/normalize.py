@@ -2,11 +2,13 @@
 
 Raw Spotify objects are huge and would bloat the agent's token usage and confuse tool
 reasoning. Every MCP tool returns these normalized shapes instead.
+
+Album-art `images` are deliberately excluded: they were ~48% of a track payload (three long
+CDN URLs each), the agent never reasons over them, and every tool result is replayed into the
+LLM context on each turn by the checkpointer. Nothing renders them today either — tool output
+never reaches the frontend. If a structured track list is ever streamed to the UI, re-source
+art on a path that bypasses the LLM context.
 """
-
-
-def _images(obj: dict) -> list[str]:
-    return [img["url"] for img in (obj.get("images") or []) if img.get("url")]
 
 
 def _spotify_url(obj: dict) -> str | None:
@@ -22,7 +24,6 @@ def artist(a: dict | None) -> dict | None:
         "genres": a.get("genres", []),
         "popularity": a.get("popularity"),
         "url": _spotify_url(a),
-        "images": _images(a),
     }
 
 
@@ -36,7 +37,6 @@ def album(al: dict | None) -> dict | None:
         "release_date": al.get("release_date"),
         "total_tracks": al.get("total_tracks"),
         "url": _spotify_url(al),
-        "images": _images(al),
     }
 
 
@@ -48,9 +48,8 @@ def track(t: dict | None) -> dict | None:
         "id": t.get("id"),
         "name": t.get("name"),
         "artists": [ar.get("name") for ar in t.get("artists", [])],
+        # Album-track endpoints omit `album`, so this may be None there.
         "album": al.get("name"),
-        # Album-track endpoints omit `album`, so images may be empty there.
-        "images": _images(al),
         "url": _spotify_url(t),
         "preview_url": t.get("preview_url"),
         "duration_ms": t.get("duration_ms"),
