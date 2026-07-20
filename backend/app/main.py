@@ -19,9 +19,11 @@ from .llm import build_llm
 from .mcp_client import build_mcp_client
 from .routes.chat import router as chat_router
 
-# Send root logs to both the terminal and a rotating file under backend/logs/. Creating
-# the dir here means `uvicorn app.main:app` captures everything without any extra setup.
-_LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
+# Send root logs to both the terminal and a rotating file under the project-root logs/.
+# It's kept OUTSIDE backend/ on purpose: `uvicorn --reload` watches backend/, so a log file
+# in there turns every write into a "change detected" — and since watchfiles' own log lines
+# propagate to this handler, that becomes a self-sustaining feedback loop.
+_LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
 _LOG_DIR.mkdir(exist_ok=True)
 _LOG_FORMAT = "%(asctime)s %(levelname)-5s %(name)s: %(message)s"
 

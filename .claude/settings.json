@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python -m py_compile mcp_server/server.py backend/app/main.py)"
+      "Bash(python -m py_compile mcp_server/server.py backend/app/main.py)",
+      "Bash(python -c ' *)",
+      "Bash(venv/Scripts/python.exe -c ' *)"
     ]
   }
 }

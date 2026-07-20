@@ -1,2 +1,15 @@
 - phase 2 create playlist for the user, enable user authentication
-- recommend songs not just based on the artists and album but from audio cues. maybe use the tag for music type more, generate similar words / synonyms and then fetch the top songs for such tags.
+
+
+- recommend songs not just based on the artists and album but from audio cues. 
+
+- maybe use the tag for music type more, generate similar words / synonyms and then fetch the top songs for such tags
+
+
+
+- Fix the UI album arts
+- Update documentation, remove claude thinking points
+- Understand the front end bindings
+- Understand the deployment - three service render
+- Understand the recommendation api flow / prompt / maybe brainstorm on it and update it for better recommendations.
+
