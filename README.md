@@ -18,12 +18,29 @@ artist top-tracks, related-artists, audio-features, browse playlists, and batch 
 unavailable to a new app. So **`search`** (with `genre:` / `year:` / `artist:` filters) is the
 backbone, and the agent makes **multiple tool calls** to assemble recommendations.
 
-The recommendation strategy is encoded in the agent's system prompt
-([backend/app/prompts.py](backend/app/prompts.py)): search a seed artist → read its `genres`
-via `get_artist` → search tracks by those genres + a year range → optionally dig into albums
-with `get_artist_albums` / `get_album_tracks` → dedupe and return ~10 concrete tracks.
+The routing is encoded in the agent's system prompt
+([backend/app/prompts.py](backend/app/prompts.py)), which decides what the user actually wants
+before it calls anything:
+
+- **a mood** → `mood_to_genres` → `genres_to_artists` → `artists_to_tracks`
+- **"songs *by* X"** → `artists_to_tracks(["X"])` directly — never via genres, or you hand them
+  somebody else's music
+- **"songs *like* X"** → the LLM picks genres for X itself → `genres_to_artists` → `artists_to_tracks`
+
+That last case is LLM-side because **Spotify no longer exposes an artist's genres** — `get_artist`
+returns them empty, so no tool can supply them. The genres it may pick from are the 40 tags in
+`VETTED_GENRES` ([backend/app/genres.py](backend/app/genres.py)), with `MOOD_GENRES` mapping 30 mood
+keywords onto the same list. Spotify's `available-genre-seeds` endpoint is also gone, so that list is
+built empirically by [scripts/validate_genres.py](scripts/validate_genres.py) — it probes each
+candidate tag and keeps the ones that actually return results.
 
 ## Architecture at a glance
+
+![High-level design](HLD.png)
+
+*The original design sketch — the shape still holds. The backend is labelled "Playlist Maker" from
+when playlist creation was the goal; that's Phase 2 (see [Roadmap](#roadmap-phase-2)), not what
+ships today.*
 
 Three independent services. The MCP server owns *all* Spotify access, so the backend never
 touches Spotify directly and stays portable.
@@ -66,7 +83,7 @@ persistent checkpointer (e.g. `SqliteSaver`/`PostgresSaver`) for production.
 ### 1. MCP server
 ```bash
 cd mcp_server
-python -m venv .venv && . .venv/Scripts/activate   # Windows; use .venv/bin/activate on macOS/Linux
+python -m venv venv && . venv/Scripts/activate   # Windows; use venv/bin/activate on macOS/Linux
 pip install -r requirements.txt
 cp .env.example .env        # then fill in SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET
 python server.py            # serves MCP at http://localhost:8001/mcp
@@ -75,7 +92,7 @@ python server.py            # serves MCP at http://localhost:8001/mcp
 ### 2. Backend
 ```bash
 cd backend
-python -m venv .venv && . .venv/Scripts/activate
+python -m venv venv && . venv/Scripts/activate
 pip install -r requirements.txt
 cp .env.example .env        # then fill in OPENAI_API_KEY
 uvicorn app.main:app --reload --port 8000
@@ -162,6 +179,8 @@ Each service reads a `.env` file (copy from its `.env.example`). Config is loade
 | `OPENAI_API_KEY`| —                            | Standard key var for whichever provider you chose.                  |
 | `MCP_URL`       | `http://localhost:8001/mcp`  | Where the backend finds the MCP server.                            |
 | `CORS_ORIGINS`  | `http://localhost:5173`      | Comma-separated allowed origins (the Vite dev server).             |
+| `LOG_LEVEL`     | `INFO`                       | Root log level.                                                     |
+| `TURN_LOG_ENABLED` | `true`                    | Write per-turn records to `logs/turns.jsonl` (see below).           |
 
 ### `mcp_server/.env`
 
@@ -171,6 +190,14 @@ Each service reads a `.env` file (copy from its `.env.example`). Config is loade
 | `SPOTIFY_CLIENT_SECRET` | —         | From your Spotify app dashboard.              |
 | `MCP_HOST`              | `0.0.0.0` | Bind host for the FastMCP server.             |
 | `MCP_PORT`              | `8001`    | Bind port; the MCP endpoint is `/mcp`.        |
+| `LOG_LEVEL`             | `INFO`    | `DEBUG` adds a line per Spotify HTTP request. |
+| `ARTISTS_PER_GENRE`     | `10`      | Artists fetched per genre by `genres_to_artists`. |
+| `TRACKS_PER_ARTIST`     | `10`      | Tracks fetched per artist by `artists_to_tracks`. |
+| `DISCOVERY_CONCURRENCY` | `8`       | Max concurrent Spotify calls in a fan-out.    |
+| `MAX_GENRES_PER_CALL`   | `4`       | Caps fan-out if the agent passes a long genre list. |
+
+The last four bound both breadth and load on the batched tools; tool arguments override them per
+call, so they are the defaults an operator can retune without a code change.
 
 ### `frontend/.env`
 
@@ -231,7 +258,7 @@ single mood request would be ~44 sequential calls and therefore ~44 LLM roundtri
 
 | Tool                 | Args                                | Returns / use                                                                 |
 |----------------------|-------------------------------------|-------------------------------------------------------------------------------|
-| `genres_to_artists`  | `genres[]`, `per_genre`             | Artists in those genres. Genre is an artist-level attribute, so this is the correct way to explore one. Tops up from a track search for tags where `type=artist` is sparse. |
+| `genres_to_artists`  | `genres[]`, `per_genre`             | Artists in those genres. One `type=artist,track` search per genre: takes the directly-tagged artists, then tops up from the track block, which is the only source that works for the ~1/3 of vetted tags where `type=artist` returns nothing. |
 | `artists_to_tracks`  | `artists[]`, `genre`, `year`, `per_artist` | Tracks for those artists, deduped and interleaved so consecutive tracks differ by artist. Also serves "songs **by** X" directly. |
 | `album_to_tracks`    | `album` (name)                      | Every track on a named album.                                                 |
 | `search`             | `query`, `type` (`track`/`artist`/`album`), `limit` (max **10**) | Resolver — e.g. which artist recorded a named track. Filters go in `query`: `artist:"…"`, `genre:"…"`, `year:2018-2024`. |
@@ -244,22 +271,21 @@ single mood request would be ~44 sequential calls and therefore ~44 LLM roundtri
 not an MCP one — it maps a mood onto `VETTED_GENRES` without touching Spotify, so it lives beside
 the genre list rather than being duplicated into a separately-deployed service.
 
-Spotify access details live in [mcp_server/spotify/](mcp_server/spotify/): `client.py` (async
-httpx transport, 429 `Retry-After` backoff, one-shot 401 token refresh), `auth.py` (Client
-Credentials token cache with refresh skew), `normalize.py` (payload trimming).
+Auth, retry/backoff and payload trimming live in [mcp_server/spotify/](mcp_server/spotify/).
 
 ## Testing — tool-call evaluation
 
-[tests/run_tool_eval.py](tests/run_tool_eval.py) is a harness that checks **which** Spotify tools
-the agent decides to call for a range of prompts. It POSTs each prompt in
-[tests/test_prompts.jsonl](tests/test_prompts.jsonl) to a running backend and tallies the
-`tool_start` events (it does not instrument the agent — it just listens to the SSE stream). Each
-prompt runs with a fresh `session_id` so memory doesn't leak between cases.
+There is **no unit-test suite and no linter configured** — don't go looking for `pytest` or
+`npm run lint`. What exists is one end-to-end harness.
 
-The prompt set spans four categories with `expected_tools` annotations: `none` (off-topic /
-capability questions → 0 tools), `single` (one `search`), `multi` (artist lookup + searches), and
-`deep` (album exploration). The report prints per-prompt tool counts and an aggregate summary;
-it exits non-zero only on transport/connection failures, not on expected-vs-actual mismatches.
+[tests/run_tool_eval.py](tests/run_tool_eval.py) checks **which** Spotify tools the agent decides to
+call. It POSTs each prompt in [tests/test_prompts.jsonl](tests/test_prompts.jsonl) to a running
+backend and tallies the `tool_start` events — it doesn't instrument the agent, it just listens to
+the SSE stream. Each prompt gets a fresh `session_id` so memory can't leak between cases. The 15
+prompts carry `expected_tools` annotations across four categories: `none` (off-topic → 0 tools),
+`routing` (10 cases: by-vs-like dispatch, moods, genres, albums), `batching` (one call, not a loop),
+and `deep` (album/track exploration). It prints per-prompt counts and a summary, and **exits
+non-zero only on transport failures, not on expected-vs-actual mismatches** — a report, not a gate.
 
 Run it with **both servers up** and the backend venv active (for `httpx` + `httpx_sse`):
 ```bash
@@ -290,29 +316,22 @@ picture of a turn, which the line-based logs can't give you:
 
 ```json
 {
-  "turn_id": "20219971f17f", "session_id": "…", "started_at": "2026-07-19T18:11:…+00:00",
-  "duration_ms": 11422, "status": "ok",
+  "turn_id": "20219971f17f", "session_id": "…", "duration_ms": 11422, "status": "ok",
   "llm": {"provider": "openai", "model": "gpt-4o"},
   "message": "melancholy chamber pop for a rainy evening",
   "answer": "…the full recommendation text…",
-  "tool_calls": [
-    {"name": "search", "input": {"query": "genre:\"chamber pop\"", "type": "track"},
-     "output": [{"id": "6D8sCFkIMohsp88E54ozeP", "name": "05", "artists": ["Noto"], "…": "…"}],
-     "duration_ms": 2890}
-  ],
+  "tool_calls": [{"name": "search", "input": {"…": "…"}, "output": [{"…": "…"}], "duration_ms": 2890}],
   "usage": {"input_tokens": 6188, "output_tokens": 476, "total_tokens": 6664},
   "error": null
 }
 ```
 
-Note `tool_calls[].output`: the Spotify results the agent actually reasoned over are recorded
-here, though they are deliberately *not* sent to the browser. On failure `status` is `"error"`
-and `error.traceback` holds the full stack — with whatever partial answer and tool calls
-completed before it died. A turn is recorded even if the client disconnects mid-stream.
-
-Records are written whole and never rotated, so the file also works as a replay dataset for
-[tests/run_tool_eval.py](tests/run_tool_eval.py). Because it contains full user messages and
-model output, it's an explicit opt-out: set `TURN_LOG_ENABLED=false` to stop writing it.
+Note `tool_calls[].output` — the Spotify results the agent actually reasoned over, recorded here
+though deliberately *not* sent to the browser. On failure `status` is `"error"` and
+`error.traceback` holds the full stack alongside whatever completed before it died; a turn is
+recorded even if the client disconnects mid-stream. Records are written whole and never rotated, so
+the file doubles as a replay dataset. It holds full user messages and model output, so it's an
+explicit opt-out: `TURN_LOG_ENABLED=false`.
 
 All `logs/` directories are git-ignored — and on Render they're ephemeral per-instance, so
 this is a development and evaluation tool, not durable production analytics.
@@ -325,36 +344,39 @@ this is a development and evaluation tool, not durable production analytics.
 | `backend/`    | FastAPI + LangGraph ReAct agent, SSE chat, per-session memory.         |
 | `frontend/`   | React/Vite streaming chat UI.                                          |
 | `tests/`      | Tool-call evaluation harness + prompt suite.                          |
+| `scripts/`    | Dev-time utilities, not runtime. Currently `validate_genres.py`.      |
+| `CLAUDE.md`   | Orientation notes for Claude Code sessions.                           |
 
 Key files within each service:
 
 ```
 mcp_server/
   server.py            FastMCP init, logging, run(transport="streamable-http")
-  tools.py             @mcp.tool definitions (search, get_artist, …) + _log_call
-  config.py            Spotify creds, host/port (pydantic-settings)
-  spotify/
-    client.py          async Spotify API client (token inject, 429/401 handling)
-    auth.py            Client Credentials token cache
-    normalize.py       trim Spotify payloads → compact dicts
+  tools.py             @mcp.tool definitions + the fan-out helpers (_pages/_gather/_items)
+  spotify/client.py    async Spotify client (token inject, 429/401 handling)
+  spotify/auth.py      Client Credentials token cache
+  spotify/normalize.py trim Spotify payloads → compact dicts
 
 backend/app/
   main.py              FastAPI app, CORS, logging, lifespan (builds agent once)
-  config.py            LLM_PROVIDER / LLM_MODEL / MCP_URL / CORS_ORIGINS
   llm.py               provider factory (init_chat_model) — single swap point
   agent.py             create_agent (ReAct) + MemorySaver
-  prompts.py           RECOMMENDATION_AGENT_SYSTEM_PROMPT
+  prompts.py           RECOMMENDATION_AGENT_SYSTEM_PROMPT — the routing policy
+  genres.py            VETTED_GENRES (40) + MOOD_GENRES keyword map
+  local_tools.py       mood_to_genres — runs in-process, no Spotify call
   mcp_client.py        MultiServerMCPClient → LangChain tools
-  schemas.py           ChatRequest
+  turnlog.py           per-turn JSONL eval records
   routes/chat.py       POST /chat → SSE stream
 
 frontend/src/
   App.jsx              chat UI (renders streamed Markdown)
   api.js               streamChat(): POST /chat, parse SSE
   hooks/useChat.js     session_id persistence + message state
-  components/TrackCard.jsx   (prepared for structured track output)
-  styles.css           chat styling
+  components/TrackCard.jsx   unused — staged for a future structured `tracks` event
 ```
+
+Each service also has a `config.py` (pydantic-settings) and a `Dockerfile`; `docker-compose.yml`
+and `render.yaml` at the root wire them together for local and deployed runs.
 
 ## Roadmap (Phase 2)
 
