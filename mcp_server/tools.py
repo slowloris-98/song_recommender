@@ -115,6 +115,7 @@ def register_tools(mcp: FastMCP) -> None:
         query: str,
         type: str = "track",
         limit: int = 10,
+        market: str | None = None,
         user_token: str | None = None,
     ) -> list[dict]:
         """Search Spotify for tracks, artists, or albums. This is the PRIMARY discovery tool.
@@ -129,12 +130,17 @@ def register_tools(mcp: FastMCP) -> None:
         finding which artist recorded a named track. For building recommendations prefer the
         batched tools (`genres_to_artists`, `artists_to_tracks`), which fan out concurrently.
 
-        `limit` is capped at 10 by Spotify. Returns a list of normalized items.
+        `market` is an optional ISO 3166-1 alpha-2 country code (e.g. "IN", "JP"); it biases
+        results to that country's catalogue and local popularity. `limit` is capped at 10 by
+        Spotify. Returns a list of normalized items.
         """
-        _log_call("search", query=query, type=type, limit=limit)
+        _log_call("search", query=query, type=type, limit=limit, market=market)
+        params = {"q": query, "type": type, "limit": min(limit, _MAX_PAGE)}
+        if market:
+            params["market"] = market
         data = await _spotify.get(
             "/search",
-            params={"q": query, "type": type, "limit": min(limit, _MAX_PAGE)},
+            params=params,
             user_token=user_token,
         )
         items = (data.get(f"{type}s") or {}).get("items", [])
@@ -149,21 +155,26 @@ def register_tools(mcp: FastMCP) -> None:
     async def genres_to_artists(
         genres: list[str],
         per_genre: int | None = None,
+        market: str | None = None,
         user_token: str | None = None,
     ) -> list[dict]:
-        """Find artists belonging to each of the given genres. Pass ALL genres at once.
+        """Find artists belonging to each of the given genres/regions. Pass ALL terms at once.
 
         Genre is an artist-level attribute in Spotify, so this is the correct way to explore a
-        genre: it returns many DISTINCT artists, whereas asking for tracks by genre yourself
-        gives you no way to spread the results across artists.
+        genre or a regional scene: it returns many DISTINCT artists, whereas asking for tracks
+        by genre yourself gives you no way to spread the results across artists.
 
-        Every genre is searched concurrently, so passing 4 genres costs one tool call, not four.
+        `market` is an optional ISO 3166-1 alpha-2 country code (e.g. "IN"); set it for a
+        language/region request to bias results to that country's catalogue. It complements a
+        region term (e.g. "hindi"), it does not replace it.
+
+        Every term is searched concurrently, so passing 4 costs one tool call, not four.
         Results are deduplicated by artist id; each artist carries the `genre` that found it, so
         you can pass that straight to `artists_to_tracks`.
         """
         genres = genres[: settings.max_genres_per_call]
         want = per_genre or settings.artists_per_genre
-        _log_call("genres_to_artists", genres=genres, per_genre=want)
+        _log_call("genres_to_artists", genres=genres, per_genre=want, market=market)
 
         artists: list[dict] = []
         seen: set[str] = set()
@@ -181,17 +192,16 @@ def register_tools(mcp: FastMCP) -> None:
         jobs, origin = [], []
         for genre in genres:
             for limit, offset in _pages(want):
+                params = {
+                    "q": f'genre:"{genre}"',
+                    "type": "artist,track",
+                    "limit": limit,
+                    "offset": offset,
+                }
+                if market:
+                    params["market"] = market
                 jobs.append(
-                    _spotify.get(
-                        "/search",
-                        params={
-                            "q": f'genre:"{genre}"',
-                            "type": "artist,track",
-                            "limit": limit,
-                            "offset": offset,
-                        },
-                        user_token=user_token,
-                    )
+                    _spotify.get("/search", params=params, user_token=user_token)
                 )
                 origin.append(genre)
         results = list(zip(origin, await _gather(jobs)))
@@ -232,6 +242,7 @@ def register_tools(mcp: FastMCP) -> None:
         artists: list[str],
         genre: str | None = None,
         year: str | None = None,
+        market: str | None = None,
         per_artist: int | None = None,
         user_token: str | None = None,
     ) -> list[dict]:
@@ -243,7 +254,9 @@ def register_tools(mcp: FastMCP) -> None:
 
         Adding `genre` narrows each artist's catalogue to that side of their work (e.g. Lady Gaga
         + jazz returns "Cheek To Cheek", not "Bad Romance") and returns MORE tracks than an
-        artist-only lookup. `year` accepts "1991" or a range like "2018-2024".
+        artist-only lookup. `year` accepts "1991" or a range like "2018-2024". `market` is an
+        optional ISO 3166-1 alpha-2 country code that biases results to that catalogue — set it
+        to match a language/region request.
 
         Every artist is searched concurrently. Results are deduplicated by track id and then
         interleaved so consecutive tracks come from different artists — take the first N for a
@@ -251,7 +264,12 @@ def register_tools(mcp: FastMCP) -> None:
         """
         want = per_artist or settings.tracks_per_artist
         _log_call(
-            "artists_to_tracks", artists=artists, genre=genre, year=year, per_artist=want
+            "artists_to_tracks",
+            artists=artists,
+            genre=genre,
+            year=year,
+            market=market,
+            per_artist=want,
         )
 
         filters = ""
@@ -263,17 +281,16 @@ def register_tools(mcp: FastMCP) -> None:
         jobs = []
         for artist in artists:
             for limit, offset in _pages(want):
+                params = {
+                    "q": f'artist:"{artist}"{filters}',
+                    "type": "track",
+                    "limit": limit,
+                    "offset": offset,
+                }
+                if market:
+                    params["market"] = market
                 jobs.append(
-                    _spotify.get(
-                        "/search",
-                        params={
-                            "q": f'artist:"{artist}"{filters}',
-                            "type": "track",
-                            "limit": limit,
-                            "offset": offset,
-                        },
-                        user_token=user_token,
-                    )
+                    _spotify.get("/search", params=params, user_token=user_token)
                 )
 
         results = await _gather(jobs)

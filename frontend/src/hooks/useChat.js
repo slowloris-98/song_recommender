@@ -11,8 +11,15 @@ function getSessionId() {
   return id;
 }
 
+// Mark every still-running step as failed. A turn can die mid-tool (backend error, MCP
+// server down), and without this those steps spin forever.
+const failOpenSteps = (steps = []) =>
+  steps.map((s) => (s.status === "running" ? { ...s, status: "error" } : s));
+
 export function useChat() {
-  // messages: [{ role: "user" | "assistant", content: string, tools?: string[] }]
+  // messages: [{ role, content, steps?: [{ id, name, input, status, ms, count }] }]
+  //   role   : "user" | "assistant"
+  //   status : "running" | "done" | "error"
   const [messages, setMessages] = useState([]);
   const [busy, setBusy] = useState(false);
   const sessionId = useRef(getSessionId());
@@ -24,7 +31,7 @@ export function useChat() {
       setMessages((m) => [
         ...m,
         { role: "user", content: text },
-        { role: "assistant", content: "", tools: [] },
+        { role: "assistant", content: "", steps: [] },
       ]);
 
       // Mutate the last (assistant) message as the stream arrives.
@@ -43,17 +50,39 @@ export function useChat() {
             if (event === "token") {
               updateAssistant((a) => ({ ...a, content: a.content + data.text }));
             } else if (event === "tool_start") {
-              updateAssistant((a) => ({ ...a, tools: [...(a.tools || []), data.name] }));
+              updateAssistant((a) => ({
+                ...a,
+                steps: [
+                  ...(a.steps || []),
+                  { id: data.id, name: data.name, input: data.input, status: "running" },
+                ],
+              }));
+            } else if (event === "tool_end") {
+              // Pair by id rather than name so concurrent calls to the same tool don't
+              // close each other's step.
+              updateAssistant((a) => ({
+                ...a,
+                steps: (a.steps || []).map((s) =>
+                  s.id === data.id
+                    ? { ...s, status: "done", ms: data.ms, count: data.count }
+                    : s
+                ),
+              }));
             } else if (event === "error") {
               updateAssistant((a) => ({
                 ...a,
+                steps: failOpenSteps(a.steps),
                 content: a.content + `\n\n[error: ${data.message}]`,
               }));
             }
           },
         });
       } catch (e) {
-        updateAssistant((a) => ({ ...a, content: a.content + `\n\n[error: ${e.message}]` }));
+        updateAssistant((a) => ({
+          ...a,
+          steps: failOpenSteps(a.steps),
+          content: a.content + `\n\n[error: ${e.message}]`,
+        }));
       } finally {
         setBusy(false);
       }

@@ -94,20 +94,27 @@ class TurnRecorder:
             {"name": name, "input": tool_input, "_started": time.monotonic()}
         )
 
-    def on_tool_end(self, name: str, output: object) -> None:
+    def on_tool_end(self, name: str, output: object) -> dict:
         """Close the most recent still-open call with this name.
 
         Matching newest-first rather than by position keeps parallel tool calls from
         attributing one call's results to another's.
+
+        Returns a small summary the caller can forward to the client: how long the call
+        took and how many items came back. We hand it back rather than letting the caller
+        recompute it — unwrapping parses every track, and a second timer would report a
+        different duration than the one recorded here.
         """
         output = _unwrap_tool_output(output)
+        count = len(output) if isinstance(output, list) else None
         for call in reversed(self._tool_calls):
             if call["name"] == name and "output" not in call:
                 call["output"] = output
                 call["duration_ms"] = round((time.monotonic() - call.pop("_started")) * 1000)
-                return
+                return {"ms": call["duration_ms"], "count": count}
         # No open call to match — record it anyway rather than dropping the results.
         self._tool_calls.append({"name": name, "input": None, "output": output})
+        return {"ms": None, "count": count}
 
     def on_usage(self, usage: dict | None) -> None:
         if usage:

@@ -34,11 +34,18 @@ audio-analysis, all `/browse/*`, and batch `/tracks|/artists|/albums`. Artist ob
 Available and used: `/search`, `/artists/{id}`, `/artists/{id}/albums`, `/albums/{id}/tracks`,
 `/tracks/{id}`. That's the whole allow-list (`PLAN.md:29-38`).
 
+**Source of truth for the Spotify Web API** — whenever you need to confirm which endpoints,
+parameters (e.g. `market`), or fields are still exposed, consult the canonical OpenAPI schema
+rather than relying on memory (much of it was deprecated in Nov 2024):
+https://developer.spotify.com/reference/web-api/open-api-schema.yaml
+
 Consequences to respect:
 - `search` is the backbone of recommendation. Genre discovery is `genre:"x"` search, not an API.
 - **Genre is an artist attribute; there is no track-level genre.** Genres can't be read from the API
-  either — `backend/app/genres.py` holds a hand-vetted `VETTED_GENRES` list, regenerated
-  empirically by `scripts/validate_genres.py`.
+  either — `backend/app/genres.py` holds a hand-vetted `VETTED_VOCAB` (genre / mood / region /
+  scene terms, with a flat `VETTED_GENRES` derived from it), regenerated empirically by
+  `scripts/validate_genres.py`. Note: emotion/weather words don't work as `genre:` filters — they
+  are mapped to real genres via `MOOD_GENRES` / the `mood_to_genres` tool instead.
 - `/search` rejects `limit > 10`. Anything wanting more must paginate (see `_pages` below).
 - Do not add `get_artist_top_tracks` or a batch `get_tracks` — they 404.
 

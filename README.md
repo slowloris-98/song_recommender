@@ -22,17 +22,22 @@ The routing is encoded in the agent's system prompt
 ([backend/app/prompts.py](backend/app/prompts.py)), which decides what the user actually wants
 before it calls anything:
 
-- **a mood** → `mood_to_genres` → `genres_to_artists` → `artists_to_tracks`
+- **an emotion/weather mood** → `mood_to_genres` → `genres_to_artists` → `artists_to_tracks`
 - **"songs *by* X"** → `artists_to_tracks(["X"])` directly — never via genres, or you hand them
   somebody else's music
 - **"songs *like* X"** → the LLM picks genres for X itself → `genres_to_artists` → `artists_to_tracks`
+- **a language/region** ("hindi songs") → the LLM picks region terms *and* sets `market` to that
+  country's ISO code → `genres_to_artists(..., market="IN")` → `artists_to_tracks`
 
-That last case is LLM-side because **Spotify no longer exposes an artist's genres** — `get_artist`
-returns them empty, so no tool can supply them. The genres it may pick from are the 40 tags in
-`VETTED_GENRES` ([backend/app/genres.py](backend/app/genres.py)), with `MOOD_GENRES` mapping 30 mood
-keywords onto the same list. Spotify's `available-genre-seeds` endpoint is also gone, so that list is
-built empirically by [scripts/validate_genres.py](scripts/validate_genres.py) — it probes each
-candidate tag and keeps the ones that actually return results.
+The "like X" case is LLM-side because **Spotify no longer exposes an artist's genres** —
+`get_artist` returns them empty, so no tool can supply them. The terms it may pick from are the
+categorized `VETTED_VOCAB` ([backend/app/genres.py](backend/app/genres.py)) — grouped by
+**genre / mood / region / scene**, with a flat `VETTED_GENRES` derived from it. Spotify's
+`available-genre-seeds` endpoint is gone, so that vocabulary is built empirically by
+[scripts/validate_genres.py](scripts/validate_genres.py), which probes each candidate as a
+`genre:"…"` search and keeps the ones that return relevant results. Emotion and weather words
+(*happy*, *sad*, *rainy*) **don't** work as `genre:` filters — Spotify name-matches them and
+returns junk — so `MOOD_GENRES` / the `mood_to_genres` tool translate those onto real genres instead.
 
 ## Architecture at a glance
 
@@ -258,18 +263,19 @@ single mood request would be ~44 sequential calls and therefore ~44 LLM roundtri
 
 | Tool                 | Args                                | Returns / use                                                                 |
 |----------------------|-------------------------------------|-------------------------------------------------------------------------------|
-| `genres_to_artists`  | `genres[]`, `per_genre`             | Artists in those genres. One `type=artist,track` search per genre: takes the directly-tagged artists, then tops up from the track block, which is the only source that works for the ~1/3 of vetted tags where `type=artist` returns nothing. |
-| `artists_to_tracks`  | `artists[]`, `genre`, `year`, `per_artist` | Tracks for those artists, deduped and interleaved so consecutive tracks differ by artist. Also serves "songs **by** X" directly. |
+| `genres_to_artists`  | `genres[]`, `per_genre`, `market`   | Artists in those genres/regions. One `type=artist,track` search per term: takes the directly-tagged artists, then tops up from the track block, which is the only source that works for the ~1/3 of vetted tags where `type=artist` returns nothing. `market` (ISO country code) biases results to that catalogue — set it for a region request, alongside the region term. |
+| `artists_to_tracks`  | `artists[]`, `genre`, `year`, `market`, `per_artist` | Tracks for those artists, deduped and interleaved so consecutive tracks differ by artist. Also serves "songs **by** X" directly. `market` (ISO country code) biases to that catalogue. |
 | `album_to_tracks`    | `album` (name)                      | Every track on a named album.                                                 |
-| `search`             | `query`, `type` (`track`/`artist`/`album`), `limit` (max **10**) | Resolver — e.g. which artist recorded a named track. Filters go in `query`: `artist:"…"`, `genre:"…"`, `year:2018-2024`. |
+| `search`             | `query`, `type` (`track`/`artist`/`album`), `limit` (max **10**), `market` | Resolver — e.g. which artist recorded a named track. Filters go in `query`: `artist:"…"`, `genre:"…"`, `year:2018-2024`. `market` is an optional ISO country code. |
 | `get_artist`         | `artist_id`                         | Single artist. **`genres`/`popularity` come back empty** — Spotify removed them. |
 | `get_artist_albums`  | `artist_id`, `limit` (max **10**)   | Albums + singles, to dig into a seed artist's catalogue.                      |
 | `get_album_tracks`   | `album_id`, `limit`                 | An album's tracks (simplified; omits the album name).                        |
 | `get_track`          | `track_id`                          | Full detail for one track (album name, duration).                            |
 
 `mood_to_genres` is a **local** backend tool ([backend/app/local_tools.py](backend/app/local_tools.py)),
-not an MCP one — it maps a mood onto `VETTED_GENRES` without touching Spotify, so it lives beside
-the genre list rather than being duplicated into a separately-deployed service.
+not an MCP one — it translates emotion/weather words (which fail as `genre:` filters) onto real
+`VETTED_GENRES` without touching Spotify, so it lives beside the genre list rather than being
+duplicated into a separately-deployed service.
 
 Auth, retry/backoff and payload trimming live in [mcp_server/spotify/](mcp_server/spotify/).
 
@@ -362,7 +368,7 @@ backend/app/
   llm.py               provider factory (init_chat_model) — single swap point
   agent.py             create_agent (ReAct) + MemorySaver
   prompts.py           RECOMMENDATION_AGENT_SYSTEM_PROMPT — the routing policy
-  genres.py            VETTED_GENRES (40) + MOOD_GENRES keyword map
+  genres.py            VETTED_VOCAB (genre/mood/region/scene) + derived VETTED_GENRES + MOOD_GENRES
   local_tools.py       mood_to_genres — runs in-process, no Spotify call
   mcp_client.py        MultiServerMCPClient → LangChain tools
   turnlog.py           per-turn JSONL eval records

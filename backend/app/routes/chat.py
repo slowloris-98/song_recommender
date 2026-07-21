@@ -2,10 +2,14 @@
 
 POST /chat -> Server-Sent Events. We stream the agent's run via `astream_events`, emitting:
   - token       : an LLM text delta
-  - tool_start  : the agent invoked a Spotify tool (name + input)
-  - tool_end    : a tool finished
+  - tool_start  : the agent invoked a Spotify tool (id + name + input)
+  - tool_end    : a tool finished (id + name + duration + how many items came back)
   - done        : the turn completed
   - error       : something failed (surfaced to the client instead of dropping the stream)
+
+`id` on the tool events is the run's `run_id`, so the client can pair an end with its start
+even when several tools run concurrently. The frontend renders these as a per-turn trace of
+what the agent actually did.
 
 Conversation memory is keyed by `thread_id = session_id` via the agent's checkpointer.
 
@@ -56,10 +60,16 @@ async def chat(req: ChatRequest, request: Request):
                 elif kind == "on_tool_start":
                     tool_input = event["data"].get("input")
                     rec.on_tool_start(event["name"], tool_input)
-                    yield _sse("tool_start", {"name": event["name"], "input": tool_input})
+                    yield _sse(
+                        "tool_start",
+                        {"id": event["run_id"], "name": event["name"], "input": tool_input},
+                    )
                 elif kind == "on_tool_end":
-                    rec.on_tool_end(event["name"], event["data"].get("output"))
-                    yield _sse("tool_end", {"name": event["name"]})
+                    summary = rec.on_tool_end(event["name"], event["data"].get("output"))
+                    yield _sse(
+                        "tool_end",
+                        {"id": event["run_id"], "name": event["name"], **summary},
+                    )
             yield _sse("done", {})
         except Exception as exc:  # noqa: BLE001 - surface any failure to the client
             rec.fail(exc)

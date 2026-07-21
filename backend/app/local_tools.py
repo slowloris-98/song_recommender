@@ -20,14 +20,17 @@ _VETTED = set(VETTED_GENRES)
 
 @tool
 def mood_to_genres(mood: str, count: int = 4) -> list[str]:
-    """Map a mood, vibe, or feeling to Spotify genres that are known to work.
+    """Translate an EMOTION or WEATHER word into Spotify genres that actually work.
 
-    Pass the user's own words ("happy", "sad and rainy", "something for studying"). Returns up
-    to `count` genre names, ready to hand to `genres_to_artists`.
+    Words like "happy", "sad", "love", or "rainy" do NOT work as `genre:` search filters —
+    Spotify name-matches them and returns junk — so this maps them to real genres instead.
+    Pass the user's own words ("happy", "sad and rainy", "something for studying"); returns up
+    to `count` genre names ready to hand to `genres_to_artists`.
 
-    Only use this for moods/vibes. If the user names a GENRE outright, pass it to
-    `genres_to_artists` directly. If they name an artist, album, or track, this tool cannot
-    help — Spotify does not expose genres for those, so choose genres yourself.
+    Use this ONLY for emotion/weather/vibe words. If the user names a GENRE, REGION, or
+    LANGUAGE ("indie rock", "hindi", "k-pop"), those ARE valid search terms — pass them to
+    `genres_to_artists` directly instead. If they name an artist, album, or track, this tool
+    cannot help — Spotify does not expose genres for those, so choose genres yourself.
     """
     text = mood.lower()
     picked: list[str] = []
