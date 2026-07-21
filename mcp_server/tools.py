@@ -12,8 +12,10 @@ request. Batched + concurrent, the same work is 3 tool calls in ~2s.
 Two Spotify constraints shape everything here:
   * `limit` is capped at 10 per request (11+ returns 400 Invalid limit), so larger counts are
     fetched by paging with `offset` (range 0-1000).
-  * Genre is an ARTIST attribute — no track-level genre exists — so genre lookups use
-    type=artist, which yields far more distinct artists than type=track.
+  * Genre is an ARTIST attribute — no track-level genre exists — but Spotify has stripped
+    `genres` from most artist objects, so `genre:"<g>"&type=artist` returns nothing for a
+    third of our vetted tags. Genre lookups therefore search type=artist,track and harvest
+    artists from both blocks; see `genres_to_artists` for the measurements.
 
 Every tool accepts an optional `user_token`. It is unused in Phase 1 (Client Credentials),
 but exists from day one so Phase-2 per-user OAuth (playlist writes) is purely additive.
@@ -152,8 +154,8 @@ def register_tools(mcp: FastMCP) -> None:
         """Find artists belonging to each of the given genres. Pass ALL genres at once.
 
         Genre is an artist-level attribute in Spotify, so this is the correct way to explore a
-        genre: it returns many DISTINCT artists, whereas searching tracks by genre returns the
-        same one or two popular artists repeatedly.
+        genre: it returns many DISTINCT artists, whereas asking for tracks by genre yourself
+        gives you no way to spread the results across artists.
 
         Every genre is searched concurrently, so passing 4 genres costs one tool call, not four.
         Results are deduplicated by artist id; each artist carries the `genre` that found it, so
@@ -173,7 +175,9 @@ def register_tools(mcp: FastMCP) -> None:
                 artists.append({**normalize.artist(raw), "genre": genre})
                 per_genre_count[genre] += 1
 
-        # Pass 1: ask for artists directly — the semantically correct query.
+        # One fan-out covering both entity types. `type` takes a comma-separated list and
+        # `limit` applies per item type, so a single request returns an `artists` block AND a
+        # `tracks` block for the same genre query — no second round trip.
         jobs, origin = [], []
         for genre in genres:
             for limit, offset in _pages(want):
@@ -182,7 +186,7 @@ def register_tools(mcp: FastMCP) -> None:
                         "/search",
                         params={
                             "q": f'genre:"{genre}"',
-                            "type": "artist",
+                            "type": "artist,track",
                             "limit": limit,
                             "offset": offset,
                         },
@@ -190,44 +194,35 @@ def register_tools(mcp: FastMCP) -> None:
                     )
                 )
                 origin.append(genre)
-        for genre, result in zip(origin, await _gather(jobs)):
+        results = list(zip(origin, await _gather(jobs)))
+
+        # Directly-tagged artists first — the semantically correct answer for the genre.
+        for genre, result in results:
             for raw in _items(result, "artists"):
                 _add(raw, genre)
+        tagged = len(artists)
 
-        # Pass 2: top up the genres that came back thin. type=artist is sparse for a lot of
-        # tags — "ambient" returns 0 artists and "shoegaze"/"trap"/"post-punk" return 1 — while
-        # a track search on the same tag yields 15-24 distinct artists. Harvesting the artists
-        # off those tracks keeps every genre usable.
-        thin = [g for g in genres if per_genre_count[g] < want]
-        if thin:
-            jobs, origin = [], []
-            for genre in thin:
-                for limit, offset in _pages(want):
-                    jobs.append(
-                        _spotify.get(
-                            "/search",
-                            params={
-                                "q": f'genre:"{genre}"',
-                                "type": "track",
-                                "limit": limit,
-                                "offset": offset,
-                            },
-                            user_token=user_token,
-                        )
-                    )
-                    origin.append(genre)
-            for genre, result in zip(origin, await _gather(jobs)):
-                for track in _items(result, "tracks"):
+        # Then top up from tracks, up to the same quota. This is not redundant: measured
+        # 2026-07-21 across all 40 VETTED_GENRES, type=artist returns ZERO artists for 13 of
+        # them (ambient, dream pop, house, disco, grunge, ...) and fewer than `want` for 23,
+        # because VETTED_GENRES was itself validated against track search (see
+        # scripts/validate_genres.py). The two result sets are also near-disjoint — mean
+        # overlap 1.1 artists — since artist search ranks by artist popularity and track
+        # search by track popularity. Re-run scripts/compare_genre_search.py to refresh.
+        for genre, result in results:
+            for track in _items(result, "tracks"):
+                if per_genre_count[genre] >= want:
+                    break
+                for raw in track.get("artists") or []:
                     if per_genre_count[genre] >= want:
                         break
-                    for raw in track.get("artists") or []:
-                        _add(raw, genre)
-
-            logger.info("   genres_to_artists: topped up thin genres %s", thin)
+                    _add(raw, genre)
 
         logger.info(
-            "   genres_to_artists: %d distinct artists %s",
+            "   genres_to_artists: %d distinct artists (%d tagged, %d off tracks) %s",
             len(artists),
+            tagged,
+            len(artists) - tagged,
             {g: per_genre_count[g] for g in genres},
         )
         return artists
