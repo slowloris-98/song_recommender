@@ -225,13 +225,24 @@ are exposed. Every tool also accepts an optional `user_token` — unused in Phas
 Credentials), present so Phase-2 per-user OAuth is purely additive. All tools return normalized
 dicts (see [mcp_server/spotify/normalize.py](mcp_server/spotify/normalize.py)).
 
+The first three are **batched**: each takes a list and fans the Spotify calls out concurrently,
+so one tool call covers a whole genre or artist list. That matters — driven one-at-a-time, a
+single mood request would be ~44 sequential calls and therefore ~44 LLM roundtrips.
+
 | Tool                 | Args                                | Returns / use                                                                 |
 |----------------------|-------------------------------------|-------------------------------------------------------------------------------|
-| `search`             | `query`, `type` (`track`/`artist`/`album`), `limit` | **Primary discovery tool.** Put filters in `query`: `artist:"…"`, `genre:"…"`, `year:2018-2024`, `track:"…"`. |
-| `get_artist`         | `artist_id`                         | Single artist incl. `genres` + `popularity` — use genres as search seeds.     |
-| `get_artist_albums`  | `artist_id`, `limit`                | Albums + singles, to dig into a seed artist's catalogue.                      |
+| `genres_to_artists`  | `genres[]`, `per_genre`             | Artists in those genres. Genre is an artist-level attribute, so this is the correct way to explore one. Tops up from a track search for tags where `type=artist` is sparse. |
+| `artists_to_tracks`  | `artists[]`, `genre`, `year`, `per_artist` | Tracks for those artists, deduped and interleaved so consecutive tracks differ by artist. Also serves "songs **by** X" directly. |
+| `album_to_tracks`    | `album` (name)                      | Every track on a named album.                                                 |
+| `search`             | `query`, `type` (`track`/`artist`/`album`), `limit` (max **10**) | Resolver — e.g. which artist recorded a named track. Filters go in `query`: `artist:"…"`, `genre:"…"`, `year:2018-2024`. |
+| `get_artist`         | `artist_id`                         | Single artist. **`genres`/`popularity` come back empty** — Spotify removed them. |
+| `get_artist_albums`  | `artist_id`, `limit` (max **10**)   | Albums + singles, to dig into a seed artist's catalogue.                      |
 | `get_album_tracks`   | `album_id`, `limit`                 | An album's tracks (simplified; omits the album name).                        |
 | `get_track`          | `track_id`                          | Full detail for one track (album name, duration).                            |
+
+`mood_to_genres` is a **local** backend tool ([backend/app/local_tools.py](backend/app/local_tools.py)),
+not an MCP one — it maps a mood onto `VETTED_GENRES` without touching Spotify, so it lives beside
+the genre list rather than being duplicated into a separately-deployed service.
 
 Spotify access details live in [mcp_server/spotify/](mcp_server/spotify/): `client.py` (async
 httpx transport, 429 `Retry-After` backoff, one-shot 401 token refresh), `auth.py` (Client

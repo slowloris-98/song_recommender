@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .agent import build_agent
 from .config import settings
 from .llm import build_llm
+from .local_tools import mood_to_genres
 from .mcp_client import build_mcp_client
 from .routes.chat import router as chat_router
 
@@ -58,6 +59,10 @@ async def lifespan(app: FastAPI):
             await asyncio.sleep(15)
     if tools is None:
         raise RuntimeError("MCP server unreachable at startup")
+    # `mood_to_genres` runs locally (no Spotify call), so it lives beside the genre list rather
+    # than in the MCP server. The agent sees it as just another tool.
+    tools = [*tools, mood_to_genres]
+    logger.info("agent tools: %s", [t.name for t in tools])
     llm = build_llm()
     app.state.agent = build_agent(llm, tools)
     yield

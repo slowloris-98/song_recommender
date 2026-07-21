@@ -4,7 +4,11 @@
       "Bash(python -m py_compile mcp_server/server.py backend/app/main.py)",
       "Bash(python -c ' *)",
       "Bash(venv/Scripts/python.exe -c ' *)",
-      "Bash(npx vite *)"
+      "Bash(npx vite *)",
+      "Bash(export PYTHONIOENCODING=utf-8)",
+      "Bash(venv/Scripts/python.exe -)",
+      "Bash(mcp_server/venv/Scripts/python.exe -c ' *)",
+      "Bash(backend/venv/Scripts/python.exe -c ' *)"
     ]
   }
 }
