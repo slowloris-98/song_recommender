@@ -1,19 +1,12 @@
 - phase 2 create playlist for the user, enable user authentication
     - add user login for
 
+- recommend songs not just based on the artists and album but from audio cues. 
+
 - create test prompts for demo
-- increase the vetted genre list = 50
 
 
 - Update documentation, remove claude thinking points
-
-
-
-- recommend songs not just based on the artists and album but from audio cues. 
-
-
-
 - Understand the front end bindings
 - Understand the deployment - three service render
-- Understand the recommendation api flow / prompt / maybe brainstorm on it and update it for better recommendations.
 
