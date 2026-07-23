@@ -25,6 +25,8 @@ with `get_artist_albums` / `get_album_tracks` → dedupe and return ~10 concrete
 
 ## Architecture at a glance
 
+![Architecture diagram](HLD.png)
+
 Three independent services. The MCP server owns *all* Spotify access, so the backend never
 touches Spotify directly and stays portable.
 
