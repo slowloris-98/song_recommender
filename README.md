@@ -102,7 +102,7 @@ docker compose up --build
 `docker-compose.yml` wires the three services together and overrides `MCP_URL` so the backend
 reaches the MCP server by its compose service name (`http://mcp_server:8001/mcp`).
 
-## Deploy to Render (free tier)
+## Deploy to Render
 
 All three services deploy to [Render](https://render.com) from one
 [`render.yaml`](render.yaml) Blueprint: the frontend as a free **Static Site** (always-on), the
@@ -113,19 +113,6 @@ backend and MCP server as free **Docker web services**.
    `SPOTIFY_CLIENT_SECRET` (MCP) and `OPENAI_API_KEY` (backend).
 3. Apply. Render builds MCP → backend → frontend using the `MCP_URL`, `CORS_ORIGINS`, and
    `VITE_API_BASE_URL` values in the Blueprint.
-
-> **⚠️ `onrender.com` hostnames are global — mind the suffix.** If a service's default name
-> (e.g. `song-recommender-backend`) is already taken by someone else, Render assigns a *suffixed*
-> hostname like `song-recommender-backend-tt5c.onrender.com`. The cross-service URLs in
-> `render.yaml` are hard-coded, so any service that gets a suffix must have its URL corrected:
-> - `VITE_API_BASE_URL` (frontend) must equal the backend's **actual** hostname. It is baked into
->   the Vite bundle at build time, so after correcting it you must **redeploy the frontend with
->   "Clear build cache & deploy"** — editing the env var alone does nothing.
-> - `CORS_ORIGINS` (backend) must equal the frontend's actual hostname.
-> - `MCP_URL` (backend) must equal the MCP server's actual hostname + `/mcp`.
->
-> In the current deployment only the backend was suffixed (`-tt5c`); MCP and frontend kept their
-> clean names, so `render.yaml` already reflects this.
 
 Smoke-test the deployed backend (use your backend's actual hostname):
 ```bash
@@ -142,13 +129,6 @@ curl -sS "https://song-recommender-frontend.onrender.com$js" \
   | grep -oE 'https://song-recommender-backend[a-z0-9-]*\.onrender\.com' | sort -u
 # expect: https://song-recommender-backend-tt5c.onrender.com
 ```
-
-**Free-tier caveats.** Free web services spin down after 15 min idle and take ~1 min to cold-start
-(the backend retries the initial MCP connection so the wake race doesn't crash startup). Because
-`MemorySaver` is in-process, multi-turn conversation memory resets whenever the backend spins
-down. The two web services share 750 free instance-hours/month; heavy use can exhaust them until
-the next month. Swap `MemorySaver` for a `PostgresSaver` (see `backend/app/agent.py`) or move to a
-paid instance to remove these limits.
 
 ## Configuration
 
