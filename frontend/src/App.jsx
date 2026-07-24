@@ -2,6 +2,7 @@ import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useChat } from "./hooks/useChat";
+import ToolTrace from "./components/ToolTrace";
 
 // Render Markdown links as new-tab links (e.g. Spotify URLs the agent includes).
 const mdComponents = {
@@ -34,14 +35,10 @@ export default function App() {
 
         {messages.map((m, i) => (
           <div key={i} className={`msg ${m.role}`}>
-            {m.role === "assistant" && m.tools?.length > 0 && (
-              <div className="tools">
-                {m.tools.map((t, j) => (
-                  <span key={j} className="chip">
-                    🔧 {t}
-                  </span>
-                ))}
-              </div>
+            {m.role === "assistant" && (
+              // `busy` is global, so the index check is what scopes "still running" to
+              // the turn actually in flight.
+              <ToolTrace steps={m.steps} active={busy && i === messages.length - 1} />
             )}
             <div className="bubble">
               {m.role === "assistant" ? (

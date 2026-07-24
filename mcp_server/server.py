@@ -30,7 +30,7 @@ _file_handler.setFormatter(logging.Formatter(_LOG_FORMAT))
 # No-op if the runtime already configured root logging, so it won't fight an existing
 # setup or change its format.
 logging.basicConfig(
-    level=logging.INFO,
+    level=settings.log_level.upper(),
     format=_LOG_FORMAT,
     handlers=[logging.StreamHandler(), _file_handler],
 )

@@ -7,12 +7,15 @@ and never go through this cache.
 """
 
 import base64
+import logging
 import time
 
 import httpx
 
 TOKEN_URL = "https://accounts.spotify.com/api/token"
 _REFRESH_SKEW_SECONDS = 30
+
+logger = logging.getLogger("spotify.auth")
 
 
 class TokenCache:
@@ -44,5 +47,8 @@ class TokenCache:
         resp.raise_for_status()
         data = resp.json()
         self._token = data["access_token"]
-        self._expires_at = time.monotonic() + float(data.get("expires_in", 3600))
+        expires_in = float(data.get("expires_in", 3600))
+        self._expires_at = time.monotonic() + expires_in
+        # Expiry only — the token itself is never logged.
+        logger.info("acquired app token, expires in %.0fs", expires_in)
         return self._token

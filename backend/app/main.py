@@ -16,12 +16,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from .agent import build_agent
 from .config import settings
 from .llm import build_llm
+from .local_tools import mood_to_genres
 from .mcp_client import build_mcp_client
 from .routes.chat import router as chat_router
 
-# Send root logs to both the terminal and a rotating file under backend/logs/. Creating
-# the dir here means `uvicorn app.main:app` captures everything without any extra setup.
-_LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
+# Send root logs to both the terminal and a rotating file under the project-root logs/.
+# It's kept OUTSIDE backend/ on purpose: `uvicorn --reload` watches backend/, so a log file
+# in there turns every write into a "change detected" — and since watchfiles' own log lines
+# propagate to this handler, that becomes a self-sustaining feedback loop.
+_LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
 _LOG_DIR.mkdir(exist_ok=True)
 _LOG_FORMAT = "%(asctime)s %(levelname)-5s %(name)s: %(message)s"
 
@@ -33,7 +36,7 @@ _file_handler.setFormatter(logging.Formatter(_LOG_FORMAT))
 # No-op if the runtime already configured root logging, so it won't fight an existing
 # setup or change its format.
 logging.basicConfig(
-    level=logging.INFO,
+    level=settings.log_level.upper(),
     format=_LOG_FORMAT,
     handlers=[logging.StreamHandler(), _file_handler],
 )
@@ -56,6 +59,10 @@ async def lifespan(app: FastAPI):
             await asyncio.sleep(15)
     if tools is None:
         raise RuntimeError("MCP server unreachable at startup")
+    # `mood_to_genres` runs locally (no Spotify call), so it lives beside the genre list rather
+    # than in the MCP server. The agent sees it as just another tool.
+    tools = [*tools, mood_to_genres]
+    logger.info("agent tools: %s", [t.name for t in tools])
     llm = build_llm()
     app.state.agent = build_agent(llm, tools)
     yield

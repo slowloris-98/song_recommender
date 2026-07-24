@@ -76,16 +76,16 @@ song_recommender/
 │   ├── spotify/
 │   │   ├── client.py             # httpx; Client Credentials token + refresh; 429/Retry-After
 │   │   ├── auth.py               # token cache; (Phase 2) user-token passthrough hook
-│   │   └── normalize.py          # trim Spotify payloads -> compact dicts (incl. album-art images)
+│   │   └── normalize.py          # trim Spotify payloads -> compact dicts (no album art; see below)
 │   ├── tools.py                  # @mcp.tool primitives + _log_call() tool-call logging
 │   ├── logs/                     # rotating mcp.log (gitignored)
 │   ├── requirements.txt
 │   └── .env.example
 ├── frontend/                     # React (Vite)
 │   ├── src/
-│   │   ├── App.jsx               # chat UI; renders markdown + inline album art
+│   │   ├── App.jsx               # chat UI; renders streamed markdown
 │   │   ├── api.js                # POST /chat, consume SSE
-│   │   ├── styles.css            # chat styling incl. album-art thumbnails
+│   │   ├── styles.css            # chat styling (incl. unused TrackCard rules)
 │   │   ├── hooks/useChat.js      # session_id mgmt + streaming state
 │   │   └── components/           # TrackCard (ready for structured track output)
 │   ├── package.json
@@ -125,8 +125,12 @@ Work that landed after the initial scaffolding, while keeping Phase 1 read-only 
 - **Logging / observability:** backend and MCP server both log to console + a rotating file
   (`backend/logs/backend.log`, `mcp_server/logs/mcp.log`; 1 MB × 3 backups). `tools.py` logs every
   tool call via `_log_call()` (args logged, `user_token` redacted).
-- **Album art:** `normalize.py` now carries `images`; the frontend renders inline album-art thumbnails
-  in assistant messages (`styles.css`).
+- **Album art (removed):** `normalize.py` deliberately omits `images`. Album art was ~48% of a
+  normalized track payload (three long CDN URLs each), and with the genre-first prompt issuing ~12
+  searches per turn — every result replayed into the LLM context by the checkpointer — it cost
+  ~6.5k tokens/turn while rendering nowhere (tool output never reaches the frontend; `TrackCard`
+  is not yet wired in). If a structured `tracks` SSE event is added, re-source art in the backend
+  for the UI only, never through the LLM context.
 - **Tool-eval harness:** `tests/run_tool_eval.py` replays `tests/test_prompts.jsonl` against the running
   backend's `/chat` SSE stream and tallies `tool_start` events per prompt — used to sanity-check that the
   agent composes the right number/kind of tool calls (categories: none / single / multi / deep). Needs
@@ -148,7 +152,7 @@ OAuth (`/auth/login`, `/auth/callback`, PKCE) + token store + "Login with Spotif
 2. Backend: `curl -N` SSE `/chat`; confirm multi-step tool calls + streamed list; follow-up with same
    `session_id` confirms memory. For a repeatable check, run `python tests/run_tool_eval.py` (backend +
    MCP must be up) to tally tool calls per prompt across the `test_prompts.jsonl` cases.
-3. Frontend: chat end-to-end; streaming render + inline album art.
+3. Frontend: chat end-to-end; streaming markdown render.
 4. Provider swap: change `LLM_PROVIDER`/`LLM_MODEL`; agent runs unchanged.
 
 ---
@@ -179,7 +183,7 @@ OAuth (`/auth/login`, `/auth/callback`, PKCE) + token store + "Login with Spotif
 **Phase 1 — frontend**
 - [x] `useChat.js`: session_id + SSE streaming
 - [x] Chat UI + `TrackCard` component (ready for structured track output)
-- [x] Inline album-art rendering in assistant messages
+- [x] Inline album-art rendering in assistant messages _(later removed — see "Album art (removed)")_
 
 **Phase 1 — hardening**
 - [x] Migrate `create_react_agent` → `create_agent` (deprecation fix)
@@ -191,7 +195,7 @@ OAuth (`/auth/login`, `/auth/callback`, PKCE) + token store + "Login with Spotif
 - [x] Static: Python byte-compiles (3.12), file tree matches plan
 - [x] Runtime: MCP standalone search/get_artist (with Spotify creds)
 - [x] Runtime: Backend SSE + session memory (OpenAI key + MCP running)
-- [x] Runtime: Frontend end-to-end (chat + album art render in browser)
+- [x] Runtime: Frontend end-to-end (chat renders in browser; album art since removed)
 - [ ] Runtime: Provider swap smoke test (non-OpenAI provider)
 
 **Deployment (Render, free tier)**

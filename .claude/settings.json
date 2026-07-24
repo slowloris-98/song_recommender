@@ -1,7 +1,23 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python -m py_compile mcp_server/server.py backend/app/main.py)"
+      "Bash(python -m py_compile mcp_server/server.py backend/app/main.py)",
+      "Bash(python -c ' *)",
+      "Bash(venv/Scripts/python.exe -c ' *)",
+      "Bash(npx vite *)",
+      "Bash(export PYTHONIOENCODING=utf-8)",
+      "Bash(venv/Scripts/python.exe -)",
+      "Bash(mcp_server/venv/Scripts/python.exe -c ' *)",
+      "Bash(backend/venv/Scripts/python.exe -c ' *)",
+      "Bash(python -m json.tool)",
+      "Bash(backend/venv/Scripts/python.exe scripts/validate_genres.py)",
+      "Bash(mcp_server/venv/Scripts/python.exe -m py_compile mcp_server/server.py mcp_server/tools.py)",
+      "Bash(backend/venv/Scripts/python.exe -m py_compile backend/app/main.py backend/app/prompts.py backend/app/genres.py backend/app/local_tools.py scripts/validate_genres.py)",
+      "Bash(./venv/Scripts/python.exe server.py)",
+      "Bash(echo \"mcp started pid $!\")",
+      "Bash(curl -s -o /dev/null -w \"backend 8000: %{http_code}\\\\n\" http://localhost:8000/)",
+      "Bash(curl -s -o /dev/null -w \"mcp 8001: %{http_code}\\\\n\" http://localhost:8001/mcp)",
+      "Bash(curl -N -s -X POST http://localhost:8000/chat -H \"Content-Type: application/json\" -d '{\"session_id\":\"hindi-verify-1\",\"message\":\"hindi songs that will feel good in hindi\"}' --max-time 90)"
     ]
   }
 }
